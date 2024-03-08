@@ -1,0 +1,136 @@
+name: Security Headers Check
+on: 
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Input the URL'
+        required: true
+        default: 'url'
+  workflow_call:
+    inputs:
+      url:
+        required: true
+        type: string
+        description: 'Input the URL'
+
+jobs:
+  security-headers:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Check URL Status
+      id: check_status
+      run: |
+          URL="${{ github.event.inputs.url }}"
+          if ! curl --output /dev/null --silent --head --fail "$URL"; then
+            echo "The $URL is Unreachable"
+            SITE_STATUS="Unreachable"
+            HTTP_STATUS="0"
+          else
+            HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" "$URL")
+            echo "Response Status Code: $HTTP_STATUS."
+            if [[ "$HTTP_STATUS" -ge 200 && "$HTTP_STATUS" -lt 300 ]]; then
+              SITE_STATUS="Up"
+              echo "The $URL is Up"
+            elif [[ "$HTTP_STATUS" -ge 300 && "$HTTP_STATUS" -lt 400 ]]; then
+              SITE_STATUS="Redirect"
+              echo "The $URL is Redirect"
+            else
+              SITE_STATUS="Down"
+              echo "The $URL is Down"
+            fi
+          fi
+          echo "HTTP_STATUS=$HTTP_STATUS" >> $GITHUB_ENV
+          echo "SITE_STATUS=$SITE_STATUS" >> $GITHUB_ENV
+      shell: bash
+
+    - name: Headers Response
+      run: |
+        URL="${{ github.event.inputs.url }}"
+        echo "Checking URL: $URL"
+        RESPONSE=$(curl -I -L -s -o /dev/null -w "%{http_code}" "$URL" || echo "error")
+        if [ "$RESPONSE" = "error" ]; then
+          echo "Error: Could not reach the URL or DNS resolution failed."
+          echo "redirect=Error" >> $GITHUB_OUTPUT
+          echo "The URL $URL could not be resolved or reached."
+        elif [ "$RESPONSE" = "200" ]; then
+          echo "Redirect: False"
+          echo "redirect=False" >> $GITHUB_OUTPUT
+          echo "Response Status Code: $RESPONSE"
+          echo "The $URL did not redirect (HTTP Status: 200)."
+        else
+          echo "Redirect: True"
+          echo "redirect=True" >> $GITHUB_OUTPUT
+          echo "Response Status Code: $RESPONSE"
+          echo "The $URL resulted in a redirect or other HTTP response (HTTP Status: $RESPONSE)."
+        fi
+      shell: bash
+
+      
+    - name: Strict Transport Security
+      run: |
+        url="${{ github.event.inputs.url }}"
+        header_value=$(curl -s -I $url | grep -i "Strict-Transport-Security" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *"max-age=31536000; includeSubDomains"* || "$header_value" == *"max-age=31536000 includeSubDomains;preload"* || "$header_value" == *"max-age=31536000"* || "$header_value" == *"max-age=31536000; preload"* ]]; then
+          echo -e "\e[32mStrict Transport Security is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: Strict Transport Security is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi
+      
+    - name: X-Content-Type-Options
+      run: |
+        url="${{ github.event.inputs.url }}"
+        header_value=$(curl -s -I $url | grep -i "X-Content-Type-Options" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *"nosniff"* ]]; then
+          echo -e "\e[32mX-Content-Type-Options is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: X-Content-Type-Options is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi
+    - name: X-XSS-Protection
+      run: |
+        url="${{ github.event.inputs.url }}"
+        header_value=$(curl -s -I $url | grep -i "X-XSS-Protection" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *"1; mode=block"* || "$header_value" == *"1;mode=block"*  ]]; then
+          echo -e "\e[32mX-XSS-Protection is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: X-XSS-Protection is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi
+    - name: X-Frame-Options
+      run: |
+        url="${{ github.event.inputs.url }}"
+        header_value=$(curl -s -I $url | grep -i "X-Frame-Options" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *"Deny"* || "$header_value" == *"ALLOW-FROM"* || "$header_value" == *"SAMEORIGIN"* || "$header_value" == *"ALLOW-FROMhttps://"* || "$header_value" == *"sameorigin"* || "$header_value" == *"deny"* || "$header_value" == *"allow-from"* || "$header_value" == *"DENY"* || "$header_value" == *"Sameorigin"* || "$header_value" == *"Allow-From"* ]]; then
+          echo -e "\e[32mX-Frame-Options is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: X-Frame-Options is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi
+    - name: Cache-Control
+      run: |
+        url="${{ github.event.inputs.url }}"
+        header_value=$(curl -s -I $url | grep -i "Cache-Control" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *"no-store"* || "$header_value" == *"public,max-age=31536000"* || "$header_value" == *"private,max-age=31536000"* || "$header_value" == *"no-cache,no-store"* || "$header_value" == *"no-cache"* || "$header_value" == *"no-store"* ]]; then
+          echo -e "\e[32mCache-Control is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: Cache-Control is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi
+    - name: Content-Security-Policy
+      run: |
+        url="https://myofficespace.ciostage.accenture.com/savedrequest"
+        header_value=$(curl -s -I $url | grep -i "Content-Security-Policy" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *"default-src'sellf''unsafe-eval''unsafe-inline'https://*.accenture.com;script-src'self''unsafe-inline''unsafe-eval'https://cdn.appdynamics.com;img-src'self'https://*.accenture.com data:https://col.eum-appdynamics.com;connect-src'self'https://*.accenture.com.col.eum-appdynamics.com;upgrade-insecure-requests,block-all-mixed-content"* ]]; then
+          echo -e "\e[32mContent-Security-Policy is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: Content-Security-Policy is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi  
+    - name: X-Powered-By
+      run: |
+        url="${{ github.event.inputs.url }}"
+        header_value=$(curl -s -I $url | grep -i "X-Powered-By" | tr -d '\r' | awk -F':' '{print $2}')
+        if [[ "$header_value" == *" "* ]]; then
+          echo -e "\e[32mX-Powered-By is valid\e[0m"
+        else
+          echo -e "\e[31mACTION REQUIRED: X-Powered-By is non-compliant. Please fix non-compliant and missing security headers.\e[0m"
+        fi
